@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+langchain==0.3.25
+langchain-groq
+langchain-community==0.3.25
+langchain-huggingface
+langchain-text-splitters
+faiss-cpu
+pypdf
+pydantic
+python-multipart
+sentence-transformers

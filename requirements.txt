@@ -1,0 +1,176 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import uuid, os, shutil, secrets
+
+from rag import process_pdf, ask_question, stream_answer, clear_session, is_model_ready, load_saved_indexes
+
+load_dotenv()
+
+# ── STARTUP VALIDATION ──
+def validate_env():
+    key = os.getenv("GROQ_API_KEY")
+    if not key or key.strip() == "":
+        print("=" * 60)
+        print("ERROR: GROQ_API_KEY is missing!")
+        print("Add to .env file: GROQ_API_KEY=your_key_here")
+        print("Get free key at: https://console.groq.com")
+        print("=" * 60)
+        raise SystemExit(1)
+    if len(key) < 20:
+        print("WARNING: GROQ_API_KEY looks invalid (too short)")
+
+validate_env()
+
+app = FastAPI(title="DocSense RAG")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+UPLOAD_DIR = "uploads"
+MAX_FILE_SIZE_MB = 10
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ── AUTHENTICATION ──
+security = HTTPBasic()
+APP_USERNAME = os.environ.get("APP_USERNAME")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    if not APP_USERNAME or not APP_PASSWORD:
+        raise HTTPException(status_code=500, detail="Auth credentials not configured.")
+    correct_user = secrets.compare_digest(credentials.username.encode(), APP_USERNAME.encode())
+    correct_pass = secrets.compare_digest(credentials.password.encode(), APP_PASSWORD.encode())
+    if not (correct_user and correct_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
+class QuestionRequest(BaseModel):
+    session_id: str
+    question: str
+    model: str = "llama-3.3-70b-versatile"
+
+
+@app.on_event("startup")
+async def startup_event():
+    load_saved_indexes()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(username: str = Depends(verify_credentials)):
+    with open("templates/index.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.post("/api/upload")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    model: str = "llama-3.3-70b-versatile",
+    username: str = Depends(verify_credentials)
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413,
+            detail=f"File too large. Maximum is {MAX_FILE_SIZE_MB}MB.")
+    if len(contents) < 100:
+        raise HTTPException(status_code=400, detail="File is too small or empty.")
+
+    session_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOAD_DIR, f"{session_id}.pdf")
+
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    result = process_pdf(file_path, session_id, model)
+
+    if not result["success"]:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {
+        "session_id": session_id,
+        "filename": file.filename,
+        "pages": result["pages"],
+        "chunks": result["chunks"],
+        "message": f"Ready! {result['pages']} pages indexed."
+    }
+
+
+@app.post("/api/ask")
+async def ask(req: QuestionRequest, username: str = Depends(verify_credentials)):
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    if len(req.question) > 2000:
+        raise HTTPException(status_code=400, detail="Question too long. Max 2000 characters.")
+
+    result = ask_question(req.session_id, req.question)
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {"answer": result["answer"], "sources": result["sources"]}
+
+
+@app.get("/api/stream")
+async def stream(
+    session_id: str,
+    question: str,
+    username: str = Depends(verify_credentials)
+):
+    if not question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    return StreamingResponse(
+        stream_answer(session_id, question),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
+@app.get("/api/ready")
+async def ready():
+    return {"ready": is_model_ready()}
+
+
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str, username: str = Depends(verify_credentials)):
+    clear_session(session_id)
+    file_path = os.path.join(UPLOAD_DIR, f"{session_id}.pdf")
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    return {"message": "Session cleared."}
+
+
+@app.get("/api/models")
+async def get_models(username: str = Depends(verify_credentials)):
+    return {"models": [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
+    ]}
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "status": "ok",
+        "groq_key_set": bool(os.getenv("GROQ_API_KEY")),
+        "model_ready": is_model_ready(),
+        "upload_dir": os.path.exists(UPLOAD_DIR)
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=7860, reload=False)
