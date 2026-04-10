@@ -1,12 +1,3 @@
----
-title: DocSense
-emoji: 📄
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-pinned: false
----
-
 # DocSense — RAG-Based PDF Q&A System
 
 DocSense is an AI web application that lets you have a conversation with any PDF document. Upload a PDF, ask questions in plain English, and get streaming answers with page references — powered by Retrieval-Augmented Generation (RAG).
@@ -14,7 +5,6 @@ DocSense is an AI web application that lets you have a conversation with any PDF
 ---
 
 ## 🚀 Features
-
 - ⚡ **Streaming answers** — Words appear one by one like ChatGPT (via SSE)
 - 🔍 **Semantic search** — `all-MiniLM-L6-v2` finds related content even when words are different
 - 💾 **FAISS saved to disk** — Sessions survive server restarts, no re-uploading needed
@@ -28,7 +18,6 @@ DocSense is an AI web application that lets you have a conversation with any PDF
 ---
 
 ## 🛠️ Tech Stack
-
 | Layer | Technology |
 |---|---|
 | Backend | FastAPI |
@@ -52,7 +41,6 @@ Generation →  AI generates an accurate answer from that context
 ```
 
 **Step-by-step pipeline:**
-
 1. **PDF Loading** — PyPDFLoader reads your PDF page by page, storing text and page numbers
 2. **Chunking** — Text split into 1000-character chunks with 200-character overlap (no sentence lost at boundaries)
 3. **Embeddings** — Each chunk converted to a 384-dimension vector using `all-MiniLM-L6-v2`
@@ -107,13 +95,11 @@ DocSense/
 ---
 
 ## 🔒 Security Note
-
 - Groq API key managed via environment variables (never hardcoded)
 - Uploaded PDFs and FAISS indexes auto-deleted after 30 minutes of inactivity
 
 ---
 
 ## 👤 Author
-
-**Akash Katakam** — B.Tech ECE, Vel Tech University (2026)  
-🔗 [LinkedIn](https://linkedin.com/in/Akashkatakam) | [GitHub](https://github.com/akashkatakam-33) | [Hugging Face](https://huggingface.co/Akashkatakam)
+**Akash Katakam** — B.Tech ECE, Vel Tech University (2026)
+🔗 [LinkedIn](https://linkedin.com/in/akashkatakam) | [GitHub](https://github.com/akashkatakam-2004) | [Hugging Face](https://huggingface.co/Akashkatakam)
